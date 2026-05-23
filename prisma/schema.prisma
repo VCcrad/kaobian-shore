@@ -71,3 +71,44 @@ model UserProfile {
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 }
+
+/** 来源管理系统，为全国扩展做准备 */
+model Source {
+  id              String    @id @default(cuid())
+  name            String // 来源名称，例如 "湖南省人社厅"
+  province        String // 省份，例如 "湖南"
+  city            String? // 城市，可空
+  type            String // 类型：人社厅 | 高校 | 组织部 | 其他
+  url             String // 列表页或首页 URL
+  priority        Int       @default(5) // 优先级 1-10，越高越优先抓取
+  updateFrequency String    @default("daily") // daily | weekly
+  lastCrawled     DateTime?
+  status          String    @default("active") // active | inactive | error
+  parserConfig    Json? // 解析规则配置，JSON 格式，留给后续扩展
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  jobs JobPosting[]
+
+  @@map("sources")
+}
+
+/** 结构化岗位（全国扩展 + 智能匹配） */
+model JobPosting {
+  id          String    @id @default(cuid())
+  sourceId    String
+  source      Source    @relation(fields: [sourceId], references: [id])
+  title       String
+  province    String
+  publishDate DateTime?
+  deadline    DateTime?
+  /** 结构化要求：{ ageLimit, politicalStatus, majorRequirements: [], notes: "", ... } */
+  requirements Json
+  rawText      String? // 原始文本，供 AI 和溯源使用
+  sourceUrl    String // 官网原始链接
+  matchStatus  String? // PERFECT | CONFLICT | NORMAL （后续使用）
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@map("job_postings")
+}

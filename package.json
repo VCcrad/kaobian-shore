@@ -9,6 +9,7 @@
     "build": "prisma generate && next build",
     "start": "next start",
     "lint": "eslint",
+    "seed:hunan": "tsx scripts/seed-hunan-parse.ts",
     "spider:safe": "node scripts/spider-safe.js"
   },
   "dependencies": {
@@ -29,6 +30,7 @@
     "eslint": "^9",
     "eslint-config-next": "16.2.6",
     "prisma": "^7.8.0",
-    "tailwindcss": "^4"
+    "tailwindcss": "^4",
+    "tsx": "^4.20.5"
   }
 }

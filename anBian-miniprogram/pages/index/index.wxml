@@ -38,7 +38,18 @@
       >
         <view class="item-meta">
           <text class="item-date">{{item.publishDate}}</text>
-          <text class="item-status">{{item.statusLabel}}</text>
+          <view class="item-meta-right">
+            <text class="item-status">{{item.statusLabel}}</text>
+            <view
+              class="ai-tutor-btn"
+              data-id="{{item.id}}"
+              data-title="{{item.title}}"
+              data-status="{{item.finalStatus}}"
+              catchtap="onAiTutorTap"
+            >
+              <text class="ai-tutor-btn-text">AI导师</text>
+            </view>
+          </view>
         </view>
 
         <text class="item-title">{{item.title}}</text>
@@ -75,7 +86,16 @@
           </view>
         </view>
 
-        <text wx:if="{{item.reason}}" class="item-reason">{{item.reason}}</text>
+        <view wx:if="{{item.conflictReasons.length > 0}}" class="item-conflicts">
+          <text class="item-conflicts-label">冲突原因</text>
+          <text
+            wx:for="{{item.conflictReasons}}"
+            wx:for-item="reasonItem"
+            wx:key="*this"
+            class="item-reason"
+          >· {{reasonItem}}</text>
+        </view>
+        <text wx:elif="{{item.reason}}" class="item-reason">{{item.reason}}</text>
       </view>
     </block>
     <view wx:else class="loading-hint">暂无岗位，请确认后端已启动</view>
