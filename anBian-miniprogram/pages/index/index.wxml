@@ -1,0 +1,83 @@
+<view class="page">
+  <view class="header">
+    <text class="brand">岸边</text>
+    <text class="tagline">SHORE · 考编读博情报雷达</text>
+  </view>
+
+  <view class="profile-bar">
+    <text class="profile-label">PROFILE</text>
+    <view class="profile-switch">
+      <view
+        class="profile-tab {{activeProfileKey === 'A' ? 'profile-tab--active' : ''}}"
+        data-profile="A"
+        bindtap="switchProfile"
+      >
+        <text class="profile-tab-text">{{profileA.label}}</text>
+      </view>
+      <view
+        class="profile-tab {{activeProfileKey === 'B' ? 'profile-tab--active' : ''}}"
+        data-profile="B"
+        bindtap="switchProfile"
+      >
+        <text class="profile-tab-text">{{profileB.label}}</text>
+      </view>
+    </view>
+    <text class="profile-meta">// {{currentProfile.age}}Y · {{currentProfile.label}}</text>
+    <text class="feed-meta">在招 {{jobLineCount}} 岗 · {{dataSourceLabel}}</text>
+  </view>
+
+  <view wx:if="{{loading}}" class="loading-hint">正在拉取岗位…</view>
+
+  <view class="timeline-container">
+    <block wx:if="{{displayedJobs.length > 0}}">
+      <view
+        wx:for="{{displayedJobs}}"
+        wx:for-item="item"
+        wx:key="id"
+        class="timeline-item {{item.statusClass}}"
+      >
+        <view class="item-meta">
+          <text class="item-date">{{item.publishDate}}</text>
+          <text class="item-status">{{item.statusLabel}}</text>
+        </view>
+
+        <text class="item-title">{{item.title}}</text>
+        <text class="item-org">{{item.organization}}</text>
+
+        <view class="item-fields">
+          <view class="field-row">
+            <text class="field-label">省市</text>
+            <text class="field-value">{{item.provinceCity}}</text>
+          </view>
+          <view class="field-row">
+            <text class="field-label">招聘</text>
+            <text class="field-value">{{item.slotsLabel}}</text>
+          </view>
+          <view class="field-row">
+            <text class="field-label">专业</text>
+            <text class="field-value field-value--wrap">{{item.majorRequirement}}</text>
+          </view>
+          <view class="field-row">
+            <text class="field-label">学历</text>
+            <text class="field-value">{{item.education}}</text>
+          </view>
+          <view class="field-row">
+            <text class="field-label">年龄</text>
+            <text class="field-value">{{item.ageRequirement}}</text>
+          </view>
+          <view class="field-row">
+            <text class="field-label">报名截止</text>
+            <text class="field-value">{{item.deadline}}</text>
+          </view>
+          <view class="field-row">
+            <text class="field-label">剩余</text>
+            <text class="field-value field-value--emph">{{item.daysLeftLabel}}</text>
+          </view>
+        </view>
+
+        <text wx:if="{{item.reason}}" class="item-reason">{{item.reason}}</text>
+      </view>
+    </block>
+    <view wx:else class="loading-hint">暂无岗位，请确认后端已启动</view>
+  </view>
+</view>

@@ -1,0 +1,9 @@
+{
+  "desc": "考编读博雷达 sitemap",
+  "rules": [
+    {
+      "action": "allow",
+      "page": "*"
+    }
+  ]
+}

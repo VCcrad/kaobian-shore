@@ -1,15 +1,17 @@
 import HomeClient from "./home-client";
-import { mapJobToCard } from "@/lib/job-utils";
-import { prisma } from "@/lib/prisma";
+import { fetchHomeJobs } from "@/lib/fetch-home-jobs";
 
 export const dynamic = "force-dynamic";
 
+/** 首页：展示后台已发布且未过期的 Job 表数据 */
 export default async function Home() {
-  const rows = await prisma.job.findMany({
-    orderBy: { createdAt: "desc" },
-  });
+  let jobs = [];
 
-  const jobs = rows.map(mapJobToCard);
+  try {
+    jobs = await fetchHomeJobs();
+  } catch (err) {
+    console.error("[首页] 加载岗位失败:", err);
+  }
 
   return <HomeClient initialJobs={jobs} />;
 }

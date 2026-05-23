@@ -1,5 +1,9 @@
 import { NextResponse } from "next/server";
+import { DIFY_CLASSIFICATION_GUIDE } from "@/lib/track-filters.js";
 
+// ★ Dify 工作流须声明输入变量 classification_guide（段落），LLM 节点引用 {{#classification_guide#}}
+//   策略单源：lib/track-filters.cjs → DIFY_CLASSIFICATION_GUIDE
+//
 // ★ 配置入口：优先读项目根目录 .env.local（推荐）
 //   第 5 行 DIFY_API_URL  → Dify「访问 API」里的工作流运行地址
 //   第 8 行 DIFY_API_KEY  → Dify「访问 API」里生成的 API 密钥
@@ -42,7 +46,10 @@ export async function POST(request) {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        inputs: { raw_text: rawText },
+        inputs: {
+          raw_text: rawText,
+          classification_guide: DIFY_CLASSIFICATION_GUIDE,
+        },
         response_mode: "blocking",
         user: "anbian-admin",
       }),

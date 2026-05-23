@@ -1,0 +1,220 @@
+.page {
+  min-height: 100vh;
+  padding: 48rpx 40rpx 80rpx;
+  background-color: #f8f9fa;
+  font-family: "SF Mono", "Menlo", "Courier New", "PingFang SC", monospace;
+  color: #333333;
+  box-sizing: border-box;
+}
+
+/* ── 顶栏 ── */
+.header {
+  margin-bottom: 56rpx;
+}
+
+.brand {
+  display: block;
+  font-size: 72rpx;
+  font-weight: 300;
+  letter-spacing: 0.32em;
+  color: #1a1a1a;
+  line-height: 1.1;
+}
+
+.tagline {
+  display: block;
+  margin-top: 16rpx;
+  font-size: 20rpx;
+  letter-spacing: 0.28em;
+  color: #9e9e9e;
+  text-transform: uppercase;
+}
+
+/* ── 身份看板 ── */
+.profile-bar {
+  margin-bottom: 48rpx;
+  padding: 20rpx 24rpx;
+  border-radius: 2rpx;
+  border: 1rpx solid #e0e0e0;
+  background-color: #ffffff;
+  font-size: 22rpx;
+  letter-spacing: 0.06em;
+}
+
+.profile-label {
+  display: block;
+  margin-bottom: 16rpx;
+  color: #757575;
+}
+
+.profile-switch {
+  display: flex;
+  gap: 32rpx;
+  margin-bottom: 12rpx;
+}
+
+.profile-tab {
+  padding-bottom: 6rpx;
+  border-bottom: 2rpx solid transparent;
+}
+
+.profile-tab--active {
+  border-bottom-color: #1a1a1a;
+}
+
+.profile-tab--active .profile-tab-text {
+  color: #1a1a1a;
+}
+
+.profile-tab-text {
+  font-size: 24rpx;
+  color: #9e9e9e;
+  letter-spacing: 0.08em;
+}
+
+.profile-meta {
+  display: block;
+  color: #333333;
+}
+
+.feed-meta {
+  display: block;
+  margin-top: 12rpx;
+  font-size: 20rpx;
+  color: #9e9e9e;
+  letter-spacing: 0.1em;
+}
+
+.loading-hint {
+  margin-bottom: 24rpx;
+  font-size: 22rpx;
+  color: #9e9e9e;
+  letter-spacing: 0.06em;
+}
+
+/* ── 线索流 ── */
+.timeline-container {
+  display: flex;
+  flex-direction: column;
+  gap: 24rpx;
+}
+
+.timeline-item {
+  padding: 28rpx 32rpx;
+  border-radius: 2rpx;
+  border: 1rpx solid #e0e0e0;
+  background-color: #ffffff;
+}
+
+.item-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16rpx;
+}
+
+.item-date {
+  font-size: 20rpx;
+  color: #9e9e9e;
+  letter-spacing: 0.12em;
+}
+
+.item-status {
+  font-size: 20rpx;
+  letter-spacing: 0.08em;
+}
+
+.item-org {
+  display: block;
+  font-size: 26rpx;
+  font-weight: 500;
+  color: #1a1a1a;
+  margin-bottom: 8rpx;
+}
+
+.item-title {
+  display: block;
+  margin-bottom: 6rpx;
+  font-size: 28rpx;
+  font-weight: 500;
+  line-height: 1.4;
+  color: #1a1a1a;
+}
+
+.item-fields {
+  margin-top: 16rpx;
+  padding-top: 16rpx;
+  border-top: 1rpx solid #eeeeee;
+}
+
+.field-row {
+  display: flex;
+  align-items: flex-start;
+  margin-bottom: 10rpx;
+  font-size: 22rpx;
+  line-height: 1.5;
+}
+
+.field-label {
+  flex-shrink: 0;
+  width: 128rpx;
+  color: #9e9e9e;
+  letter-spacing: 0.08em;
+}
+
+.field-value {
+  flex: 1;
+  color: #424242;
+}
+
+.field-value--wrap {
+  word-break: break-all;
+}
+
+.field-value--emph {
+  color: #1a1a1a;
+  font-weight: 500;
+}
+
+.item-reason {
+  display: block;
+  margin-top: 12rpx;
+  font-size: 20rpx;
+  color: #9e9e9e;
+  letter-spacing: 0.04em;
+}
+
+/* ── 状态：完美命中 ── */
+.timeline-item.perfect {
+  background-color: #f2f9f5;
+  border-color: #c8e6c9;
+}
+
+.timeline-item.perfect .item-status {
+  color: #2e7d32;
+}
+
+.timeline-item.perfect .item-org,
+.timeline-item.perfect .item-title {
+  color: #1b5e20;
+}
+
+/* ── 状态：条件冲突（档案注销感） ── */
+.timeline-item.conflict {
+  opacity: 0.5;
+  background-color: #fafafa;
+  border-color: #eeeeee;
+}
+
+.timeline-item.conflict .item-org,
+.timeline-item.conflict .item-title,
+.timeline-item.conflict .item-status,
+.timeline-item.conflict .item-date,
+.timeline-item.conflict .item-reason {
+  color: #9e9e9e;
+}
+
+/* ── 状态：普通 ── */
+.timeline-item.normal .item-status {
+  color: #757575;
+}

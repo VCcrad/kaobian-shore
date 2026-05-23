@@ -12,23 +12,62 @@ datasource db {
 }
 
 model Job {
-  id        Int      @id @default(autoincrement())
-  title     String
-  deadline  String
-  majors    String
-  slots     Int
-  sourceUrl String?
-  createdAt DateTime @default(now())
+  id             Int       @id @default(autoincrement())
+  title          String
+  deadline       String
+  majors         String
+  slots          Int
+  /** 赛道分类：高校院所招聘 | 博士/申博/博后 | 地方编制求职 */
+  category       String    @default("")
+  sourceUrl      String?
+  organization   String    @default("")
+  provinceCity   String    @default("")
+  education      String    @default("")
+  ageRequirement String    @default("")
+  summary        String    @default("")
+  /** 正文 + 附件透视文本，供前台关键字检索 */
+  content        String    @default("")
+  publishDate    String    @default("")
+  isDeleted      Boolean   @default(false)
+  deletedAt      DateTime?
+  createdAt      DateTime  @default(now())
 }
 
 /** 爬虫原始数据：列表 + 详情正文，供大模型提炼 */
 model RawJob {
-  id          Int      @id @default(autoincrement())
+  id          Int       @id @default(autoincrement())
   title       String
-  link        String   @unique
-  publishedAt String   @default("")
+  link        String    @unique
+  publishedAt String    @default("")
   content     String?
-  status      String   @default("PENDING")
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  /** 赛道分类（Dify 提炼或人工审核）：高校院所招聘 | 博士/申博/博后 | 地方编制求职 */
+  category    String    @default("")
+  status      String    @default("PENDING")
+  isDeleted   Boolean   @default(false)
+  deletedAt   DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+}
+
+/** 高校爬虫健康巡逻战报 */
+model SchoolStatus {
+  id           String   @id
+  schoolName   String   @unique
+  lastRunTime  DateTime
+  status       String
+  successCount Int      @default(0)
+  errorMsg     String?
+}
+
+/** 用户画像：专业/学历/年龄等，供岗位匹配与高亮（userId 预留，待接入 User 表） */
+model UserProfile {
+  id            String   @id @default(uuid())
+  userId        String   @unique
+  major         String
+  degree        String
+  age           Int
+  isPartyMember Boolean  @default(false)
+  originPlace   String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 }

@@ -1,8 +1,8 @@
 import "./globals.css";
 
 export const metadata = {
-  title: "岸边 | anBian-web",
-  description: "考公、考编、读博、高校编制数据整合平台",
+  title: "岸边 / anBian.cn",
+  description: "考编、申博、高校院所招聘聚合 — 你已经在岸边了",
 };
 
 export default function RootLayout({ children }) {

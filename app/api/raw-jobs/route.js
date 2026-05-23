@@ -1,10 +1,11 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { normalizeTrackCategory } from "@/lib/track-filters.js";
 
 export async function GET() {
   try {
     const rows = await prisma.rawJob.findMany({
-      where: { status: "PENDING" },
+      where: { status: "PENDING", isDeleted: false },
       orderBy: { publishedAt: "desc" },
     });
 
@@ -26,20 +27,33 @@ export async function PATCH(request) {
   }
 
   const id = Number(body?.id);
-  const status = String(body?.status ?? "").trim();
+  const status = body?.status !== undefined ? String(body.status).trim() : undefined;
+  const category =
+    body?.category !== undefined
+      ? String(body.category).trim()
+      : undefined;
 
   if (!id || Number.isNaN(id)) {
     return NextResponse.json({ error: "缺少有效的 id" }, { status: 400 });
   }
 
-  if (!status) {
-    return NextResponse.json({ error: "缺少 status" }, { status: 400 });
+  if (!status && category === undefined) {
+    return NextResponse.json(
+      { error: "缺少 status 或 category" },
+      { status: 400 },
+    );
+  }
+
+  const data = {};
+  if (status) data.status = status;
+  if (category !== undefined) {
+    data.category = normalizeTrackCategory(category);
   }
 
   try {
     const updated = await prisma.rawJob.update({
       where: { id },
-      data: { status },
+      data,
     });
 
     return NextResponse.json(updated);

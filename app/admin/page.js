@@ -1,20 +1,32 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  TRACK_CATEGORY_LIST,
+  normalizeTrackCategory,
+} from "@/lib/track-category-client";
+import {
+  ADMIN_INPUT_CLASS,
+  FrontPublishPreview,
+  PublishedJobCard,
+  TrackBadge,
+} from "@/components/admin/admin-ui";
+import { extractOrganizationFromTitle } from "@/lib/job-utils";
 
 const ADMIN_PASSWORD = "123456";
 
-const SAMPLE_RAW_TEXT = `????2026??????????
+const SAMPLE_RAW_TEXT = `某某大学2026年专职辅导员招聘公告
 
-????????????????12??
-??????????????????????????
-?????2026?5?20?17:00?`;
+因工作需要，面向社会公开招聘专职辅导员12名。
+应聘者须为中共党员，硕士研究生及以上学历。
+报名截止时间为2026年5月20日17:00。`;
 
 const EMPTY_FORM = {
   title: "",
   deadline: "",
   major: "",
   headcount: "",
+  category: "",
 };
 
 function previewContent(text, maxLen = 100) {
@@ -106,7 +118,31 @@ function parseDifyWorkflowResponse(payload) {
       "\u62db\u8058\u4eba\u6570",
       "recruit_count",
     ]),
+    category: normalizeTrackCategory(
+      pickString(fields, [
+        "category",
+        "Category",
+        "\u884c\u4e1a\u5206\u7c7b",
+        "\u8d5b\u9053",
+      ]),
+    ),
   };
+}
+
+const EMPTY_PUBLISHED_FILTER = { keyword: "", category: "全部" };
+
+function filterPublishedJobs(jobs, filters) {
+  const q = filters.keyword.trim().toLowerCase();
+  return jobs.filter((job) => {
+    if (filters.category !== "全部" && job.category !== filters.category) {
+      return false;
+    }
+    if (!q) return true;
+    const hay = [job.title, job.majors, job.category, job.deadline]
+      .join(" ")
+      .toLowerCase();
+    return hay.includes(q);
+  });
 }
 
 export default function AdminPage() {
@@ -138,6 +174,23 @@ export default function AdminPage() {
   const [listLoading, setListLoading] = useState(false);
   const [deletingId, setDeletingId] = useState(null);
 
+  const [schoolStatuses, setSchoolStatuses] = useState([]);
+  const [schoolStatusLoading, setSchoolStatusLoading] = useState(false);
+
+  const [adminTab, setAdminTab] = useState("work");
+  const [trashJobs, setTrashJobs] = useState([]);
+  const [trashRawJobs, setTrashRawJobs] = useState([]);
+  const [trashLoading, setTrashLoading] = useState(false);
+  const [trashActionId, setTrashActionId] = useState(null);
+  const [publishedFilter, setPublishedFilter] = useState(EMPTY_PUBLISHED_FILTER);
+
+  const trashCount = trashJobs.length + trashRawJobs.length;
+
+  const filteredPublishedJobs = useMemo(
+    () => filterPublishedJobs(publishedJobs, publishedFilter),
+    [publishedJobs, publishedFilter],
+  );
+
   const loadPendingRawJobs = useCallback(async () => {
     setPendingLoading(true);
     try {
@@ -154,10 +207,43 @@ export default function AdminPage() {
     }
   }, []);
 
+  const loadSchoolStatuses = useCallback(async () => {
+    setSchoolStatusLoading(true);
+    try {
+      const res = await fetch("/api/admin/school-status");
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data?.error || "\u52a0\u8f7d\u5b66\u6821\u76d1\u63a7\u5931\u8d25");
+      }
+      setSchoolStatuses(Array.isArray(data) ? data : []);
+    } catch (err) {
+      setExtractError(err?.message || "\u52a0\u8f7d\u5b66\u6821\u76d1\u63a7\u5931\u8d25");
+    } finally {
+      setSchoolStatusLoading(false);
+    }
+  }, []);
+
+  const loadTrash = useCallback(async () => {
+    setTrashLoading(true);
+    try {
+      const res = await fetch("/api/admin/trash");
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data?.error || "\u52a0\u8f7d\u5783\u573e\u7bb1\u5931\u8d25");
+      }
+      setTrashJobs(Array.isArray(data.jobs) ? data.jobs : []);
+      setTrashRawJobs(Array.isArray(data.rawJobs) ? data.rawJobs : []);
+    } catch (err) {
+      setExtractError(err?.message || "\u52a0\u8f7d\u5783\u573e\u7bb1\u5931\u8d25");
+    } finally {
+      setTrashLoading(false);
+    }
+  }, []);
+
   const loadPublishedJobs = useCallback(async () => {
     setListLoading(true);
     try {
-      const res = await fetch("/api/jobs");
+      const res = await fetch("/api/jobs?all=1");
       const data = await res.json();
       if (!res.ok) {
         throw new Error(data?.error || "\u52a0\u8f7d\u5c97\u4f4d\u5217\u8868\u5931\u8d25");
@@ -174,8 +260,22 @@ export default function AdminPage() {
     if (unlocked) {
       loadPendingRawJobs();
       loadPublishedJobs();
+      loadSchoolStatuses();
+      loadTrash();
     }
-  }, [unlocked, loadPendingRawJobs, loadPublishedJobs]);
+  }, [
+    unlocked,
+    loadPendingRawJobs,
+    loadPublishedJobs,
+    loadSchoolStatuses,
+    loadTrash,
+  ]);
+
+  useEffect(() => {
+    if (unlocked && adminTab === "trash") {
+      loadTrash();
+    }
+  }, [unlocked, adminTab, loadTrash]);
 
   function handleUnlock(e) {
     e.preventDefault();
@@ -219,15 +319,41 @@ export default function AdminPage() {
     setSelectedRawJobIds(new Set());
   }
 
+  async function persistRawJobCategory(rawJobId, category) {
+    const normalized = normalizeTrackCategory(category);
+    if (!rawJobId || !normalized) return;
+
+    try {
+      const res = await fetch("/api/raw-jobs", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: rawJobId, category: normalized }),
+      });
+      if (!res.ok) return;
+
+      setPendingRawJobs((prev) =>
+        prev.map((item) =>
+          item.id === rawJobId ? { ...item, category: normalized } : item,
+        ),
+      );
+    } catch {
+      /* 非阻塞 */
+    }
+  }
+
   function applyExtractToForm(job, parsed) {
     setForm({
       title: parsed.title,
       deadline: parsed.deadline,
       major: parsed.major,
       headcount: parsed.headcount,
+      category: parsed.category || "",
     });
     setCurrentSourceUrl(String(job?.link ?? "").trim());
     if (job?.content) setRawText(job.content);
+    if (job?.id && parsed.category) {
+      void persistRawJobCategory(job.id, parsed.category);
+    }
   }
 
   function clearBatchUiState() {
@@ -256,6 +382,14 @@ export default function AdminPage() {
       throw new Error("\u6807\u9898\u4e3a\u7a7a\uff0c\u65e0\u6cd5\u53d1\u5e03");
     }
 
+    const category = normalizeTrackCategory(parsed.category ?? "");
+    if (!category) {
+      throw new Error("\u7f3a\u5c11\u8d5b\u9053\u5206\u7c7b\uff0c\u8bf7\u91cd\u65b0\u63d0\u70bc\u6216\u624b\u52a8\u9009\u62e9");
+    }
+
+    const parsedOrg = extractOrganizationFromTitle(title);
+    const contentBody = String(rawJob?.content ?? "").trim();
+
     const res = await fetch("/api/jobs", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -264,7 +398,12 @@ export default function AdminPage() {
         deadline: parsed.deadline,
         majors: parsed.major,
         slots: parsed.headcount,
+        category,
         sourceUrl: String(rawJob?.link ?? "").trim(),
+        organization: parsedOrg.organization,
+        content: contentBody,
+        summary: contentBody.slice(0, 400),
+        publishDate: new Date().toISOString().slice(0, 10),
       }),
     });
 
@@ -272,6 +411,10 @@ export default function AdminPage() {
     if (!res.ok) {
       const detail = data?.details ? `\uff1a${data.details}` : "";
       throw new Error((data?.error || "\u53d1\u5e03\u5931\u8d25") + detail);
+    }
+
+    if (rawJob?.id) {
+      await persistRawJobCategory(rawJob.id, category);
     }
 
     return data;
@@ -329,7 +472,8 @@ export default function AdminPage() {
       !parsed.title &&
       !parsed.deadline &&
       !parsed.major &&
-      !parsed.headcount
+      !parsed.headcount &&
+      !parsed.category
     ) {
       throw new Error(
         "Dify \u5df2\u8fd4\u56de\uff0c\u4f46\u672a\u8bc6\u522b\u5230\u7ed3\u6784\u5316\u5b57\u6bb5\u3002",
@@ -339,7 +483,7 @@ export default function AdminPage() {
     return parsed;
   }
 
-  async function runDifyExtract(text) {
+  async function runDifyExtract(text, rawJob = null) {
     setIsExtracting(true);
     setExtractError("");
     setActionMsg("");
@@ -348,12 +492,17 @@ export default function AdminPage() {
 
     try {
       const parsed = await fetchDifyParsed(text);
-      setForm({
-        title: parsed.title,
-        deadline: parsed.deadline,
-        major: parsed.major,
-        headcount: parsed.headcount,
-      });
+      if (rawJob) {
+        applyExtractToForm(rawJob, parsed);
+      } else {
+        setForm({
+          title: parsed.title,
+          deadline: parsed.deadline,
+          major: parsed.major,
+          headcount: parsed.headcount,
+          category: parsed.category || "",
+        });
+      }
       setActionMsg(
         "AI \u63d0\u70bc\u5b8c\u6210\uff0c\u8bf7\u5728\u4e2d\u680f\u6838\u5bf9\u540e\u53d1\u5e03\u3002",
       );
@@ -381,7 +530,7 @@ export default function AdminPage() {
     );
     setExtractingRawId(job.id);
     try {
-      await runDifyExtract(content);
+      await runDifyExtract(content, job);
     } finally {
       setExtractingRawId(null);
     }
@@ -565,14 +714,35 @@ export default function AdminPage() {
       return;
     }
 
+    const category = normalizeTrackCategory(form.category.trim());
+    if (!category) {
+      setActionMsg("");
+      setExtractError("\u8bf7\u9009\u62e9\u8d5b\u9053\u5206\u7c7b\u540e\u518d\u53d1\u5e03\u3002");
+      return;
+    }
+
     setExtractError("");
     setActionMsg("");
+
+    const parsedOrg = extractOrganizationFromTitle(title);
+    const contentBody = rawText.trim();
 
     try {
       const res = await fetch("/api/jobs", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ title, deadline, majors, slots, sourceUrl }),
+        body: JSON.stringify({
+          title,
+          deadline,
+          majors,
+          slots,
+          category,
+          sourceUrl,
+          organization: parsedOrg.organization,
+          content: contentBody,
+          summary: contentBody.slice(0, 400),
+          publishDate: new Date().toISOString().slice(0, 10),
+        }),
       });
 
       const data = await res.json();
@@ -602,23 +772,61 @@ export default function AdminPage() {
     setExtractError("");
 
     try {
-      const res = await fetch(`/api/jobs/${id}`, { method: "DELETE" });
+      const res = await fetch(`/api/jobs/${id}`, { method: "PATCH" });
       const data = await res.json();
 
       if (!res.ok) {
         throw new Error(
-          data?.error || `\u4e0b\u67b6\u5931\u8d25\uff08${res.status}\uff09`,
+          data?.error || `\u79fb\u5165\u5783\u573e\u7bb1\u5931\u8d25\uff08${res.status}\uff09`,
         );
       }
 
-      setActionMsg("\u4e0b\u67b6\u6210\u529f\uff01");
+      setActionMsg("\u5df2\u79fb\u5165\u667a\u80fd\u5783\u573e\u7bb1\uff01");
       await loadPublishedJobs();
+      await loadTrash();
     } catch (err) {
       setExtractError(
-        err?.message || "\u4e0b\u67b6\u5931\u8d25\uff0c\u8bf7\u91cd\u8bd5\u3002",
+        err?.message || "\u79fb\u5165\u5783\u573e\u7bb1\u5931\u8d25\uff0c\u8bf7\u91cd\u8bd5\u3002",
       );
     } finally {
       setDeletingId(null);
+    }
+  }
+
+  async function handleTrashAction(entity, id, action) {
+    const key = `${entity}-${id}-${action}`;
+    setTrashActionId(key);
+    setExtractError("");
+
+    try {
+      if (action === "restore") {
+        const res = await fetch("/api/admin/trash", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ entity, id, action: "restore" }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          throw new Error(data?.error || "\u6062\u590d\u5931\u8d25");
+        }
+        setActionMsg("\u5df2\u6062\u590d\uff0c\u6570\u636e\u5c06\u91cd\u65b0\u51fa\u73b0\u5728\u5de5\u4f5c\u53f0\u3002");
+      } else if (action === "purge") {
+        const base = entity === "job" ? "/api/jobs" : "/api/raw-jobs";
+        const res = await fetch(`${base}/${id}`, { method: "DELETE" });
+        const data = await res.json();
+        if (!res.ok) {
+          throw new Error(data?.error || "\u5f7b\u5e95\u5220\u9664\u5931\u8d25");
+        }
+        setActionMsg("\u5df2\u5f7b\u5e95\u5220\u9664\u3002");
+      }
+
+      await loadTrash();
+      await loadPublishedJobs();
+      await loadPendingRawJobs();
+    } catch (err) {
+      setExtractError(err?.message || "\u64cd\u4f5c\u5931\u8d25");
+    } finally {
+      setTrashActionId(null);
     }
   }
 
@@ -635,26 +843,191 @@ export default function AdminPage() {
   const batchFailCount = batchResults.filter((item) => !item.ok).length;
 
   return (
-    <div className="min-h-screen bg-[#F9FAFB]">
-      <header className="border-b border-[#E5E7EB] bg-white px-4 py-3 sm:px-6">
-        <div className="mx-auto flex max-w-[1800px] items-center justify-between">
-          <h1 className="text-sm font-medium text-[#111827]">
-            {"\u5cb8\u8fb9 \u00b7 \u7ba1\u7406\u5458\u6536\u4ef6\u7bb1"}
-          </h1>
-          <a href="/" className="text-xs text-gray-500 hover:text-[#111827]">
-            {"\u8fd4\u56de\u524d\u53f0"}
+    <div className="min-h-screen bg-slate-50 text-slate-800">
+      <header className="sticky top-0 z-40 border-b border-slate-200 bg-white">
+        <div className="mx-auto flex max-w-[1800px] items-center justify-between gap-4 px-4 py-3 sm:px-6">
+          <a href="/" className="flex items-center gap-2.5 shrink-0">
+            <span
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-slate-900 text-sm font-semibold text-white"
+              aria-hidden
+            >
+              岸
+            </span>
+            <span className="leading-tight">
+              <span className="block text-sm font-semibold text-slate-900">
+                岸边<span className="text-slate-400">/</span>
+                <span className="font-medium text-slate-700">管理后台</span>
+              </span>
+              <span className="block text-[11px] text-slate-500">
+                收件箱 · 提炼 · 发布
+              </span>
+            </span>
+          </a>
+          <a
+            href="/"
+            className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm text-slate-600 hover:bg-slate-50"
+          >
+            查看前台
           </a>
         </div>
       </header>
 
-      <div className="mx-auto max-w-md px-4 py-8 sm:px-6">
+      {unlocked && (
+        <section className="border-b border-slate-200 bg-white px-4 py-2 sm:px-6">
+          <div className="mx-auto flex max-w-[1800px] flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setAdminTab("work")}
+              className={`rounded-full px-3 py-1.5 text-sm transition-colors ${
+                adminTab === "work"
+                  ? "bg-slate-900 font-medium text-white"
+                  : "text-slate-600 hover:bg-slate-100"
+              }`}
+            >
+              工作台
+            </button>
+            <button
+              type="button"
+              onClick={() => setAdminTab("trash")}
+              className={`rounded-full px-3 py-1.5 text-sm transition-colors ${
+                adminTab === "trash"
+                  ? "bg-slate-900 font-medium text-white"
+                  : "text-slate-600 hover:bg-slate-100"
+              }`}
+            >
+              智能垃圾桶
+              {trashCount > 0 ? (
+                <span className="ml-1 tabular-nums opacity-80">
+                  ({trashCount})
+                </span>
+              ) : null}
+            </button>
+          </div>
+        </section>
+      )}
+
+      {unlocked && (
+        <section className="border-b border-slate-200 bg-white px-4 py-3 sm:px-6">
+          <div className="mx-auto grid max-w-[1800px] gap-3 sm:grid-cols-3">
+            <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3">
+              <p className="text-xs text-slate-500">待处理池</p>
+              <p className="mt-0.5 text-2xl font-semibold tabular-nums text-slate-900">
+                {pendingLoading ? "…" : pendingRawJobs.length}
+              </p>
+            </div>
+            <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3">
+              <p className="text-xs text-slate-500">已发布（含过期）</p>
+              <p className="mt-0.5 text-2xl font-semibold tabular-nums text-slate-900">
+                {listLoading ? "…" : publishedJobs.length}
+              </p>
+            </div>
+            <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3">
+              <p className="text-xs text-slate-500">垃圾桶</p>
+              <p className="mt-0.5 text-2xl font-semibold tabular-nums text-slate-900">
+                {trashLoading ? "…" : trashCount}
+              </p>
+            </div>
+          </div>
+        </section>
+      )}
+
+      {unlocked && adminTab === "work" && (
+        <details className="border-b border-slate-200 bg-slate-50/80 px-4 py-2 sm:px-6">
+          <summary className="mx-auto max-w-[1800px] cursor-pointer list-none text-xs font-medium text-slate-600 marker:content-none [&::-webkit-details-marker]:hidden">
+            <span className="inline-flex items-center gap-2">
+              学校雷达监控
+              <span className="rounded-full bg-slate-200 px-2 py-px text-[11px] tabular-nums text-slate-600">
+                {schoolStatuses.length}
+              </span>
+            </span>
+          </summary>
+          <div className="mx-auto max-w-[1800px] pb-3 pt-2">
+            <div className="mb-2 flex justify-end">
+              <button
+                type="button"
+                onClick={loadSchoolStatuses}
+                disabled={schoolStatusLoading}
+                className="text-xs text-slate-500 hover:text-slate-900 disabled:opacity-50"
+              >
+                {schoolStatusLoading ? "刷新中…" : "刷新"}
+              </button>
+            </div>
+            {schoolStatusLoading && schoolStatuses.length === 0 ? (
+              <p className="text-xs text-slate-500">加载中…</p>
+            ) : schoolStatuses.length === 0 ? (
+              <p className="text-xs text-slate-500">
+                暂无巡逻记录，请先运行 npm run spider:safe
+              </p>
+            ) : (
+              <ul className="flex flex-wrap gap-2">
+                {schoolStatuses.map((item) => {
+                  const healthy = item.status === "HEALTHY";
+                  const runLabel = item.lastRunTime
+                    ? new Date(item.lastRunTime).toLocaleString("zh-CN", {
+                        month: "2-digit",
+                        day: "2-digit",
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      })
+                    : "-";
+                  const tip = healthy
+                    ? `正常 · 本次入库 ${item.successCount} 条 · ${runLabel}`
+                    : item.errorMsg || "爬虫异常";
+
+                  return (
+                    <li
+                      key={item.id}
+                      title={tip}
+                      className={`inline-flex cursor-default items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs ${
+                        healthy
+                          ? "border-green-200 bg-green-50 text-green-800"
+                          : "border-red-200 bg-red-50 text-red-800"
+                      }`}
+                    >
+                      <span
+                        className={`h-1.5 w-1.5 rounded-full ${
+                          healthy ? "bg-green-600" : "bg-red-600"
+                        }`}
+                        aria-hidden
+                      />
+                      <span className="font-medium">{item.schoolName}</span>
+                      {healthy ? (
+                        <span className="text-green-700/80">
+                          +{item.successCount}
+                        </span>
+                      ) : (
+                        <span className="max-w-[120px] truncate text-red-700/90">
+                          {item.errorMsg || "BROKEN"}
+                        </span>
+                      )}
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </div>
+        </details>
+      )}
+
+      <div className="mx-auto max-w-md px-4 py-12 sm:px-6">
         {!unlocked && (
-          <form onSubmit={handleUnlock} className="space-y-3">
+          <form
+            onSubmit={handleUnlock}
+            className="space-y-3 rounded-lg border border-slate-200 bg-white p-6 shadow-sm"
+          >
+            <div className="mb-1 flex items-center gap-2">
+              <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-slate-900 text-sm font-semibold text-white">
+                岸
+              </span>
+              <span className="text-sm font-semibold text-slate-900">
+                岸边管理后台
+              </span>
+            </div>
             <label
               htmlFor="admin-password"
-              className="block text-sm font-medium text-[#111827]"
+              className="block text-sm font-medium text-slate-800"
             >
-              {"\u8bf7\u8f93\u5165\u7ba1\u7406\u5458\u5bc6\u7801"}
+              请输入管理员密码
             </label>
             <input
               id="admin-password"
@@ -664,27 +1037,25 @@ export default function AdminPage() {
                 setPassword(e.target.value);
                 setAuthError(false);
               }}
-              placeholder={"\u7ba1\u7406\u5458\u5bc6\u7801"}
-              className="w-full rounded-md border border-[#E5E7EB] bg-white px-3 py-2 text-sm text-[#111827] focus:border-gray-400 focus:outline-none"
+              placeholder="管理员密码"
+              className={ADMIN_INPUT_CLASS}
             />
             <button
               type="submit"
-              className="w-full rounded-md bg-[#111827] py-2 text-sm font-medium text-white hover:bg-gray-800"
+              className="w-full rounded-lg bg-slate-900 py-2 text-sm font-medium text-white hover:bg-slate-800"
             >
-              {"\u8fdb\u5165\u540e\u53f0"}
+              进入后台
             </button>
             {authError && (
-              <p className="text-center text-sm text-red-600">
-                {"\u6743\u9650\u4e0d\u8db3"}
-              </p>
+              <p className="text-center text-sm text-red-600">权限不足</p>
             )}
           </form>
         )}
       </div>
 
-      {unlocked && (
+      {unlocked && adminTab === "work" && (
         <>
-          <div className="mx-auto flex h-[calc(100vh-52px)] max-w-[1800px] gap-0 border-t border-[#E5E7EB]">
+          <div className="mx-auto flex h-[calc(100vh-14rem)] min-h-[480px] max-w-[1800px] gap-0 border-t border-slate-200">
             <section className="flex w-[34%] shrink-0 flex-col border-r border-[#E5E7EB] bg-white p-4">
               <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">
                 {"\u516c\u544a\u539f\u6587 / AI \u8f93\u5165"}
@@ -754,7 +1125,7 @@ export default function AdminPage() {
                     type="text"
                     value={form.title}
                     onChange={(e) => updateField("title", e.target.value)}
-                    className="w-full rounded-md border border-[#E5E7EB] px-3 py-2 text-sm"
+                    className={ADMIN_INPUT_CLASS}
                   />
                 </div>
                 <div>
@@ -765,7 +1136,7 @@ export default function AdminPage() {
                     type="date"
                     value={form.deadline}
                     onChange={(e) => updateField("deadline", e.target.value)}
-                    className="w-full rounded-md border border-[#E5E7EB] px-3 py-2 text-sm"
+                    className={ADMIN_INPUT_CLASS}
                   />
                 </div>
                 <div>
@@ -776,7 +1147,7 @@ export default function AdminPage() {
                     type="text"
                     value={form.major}
                     onChange={(e) => updateField("major", e.target.value)}
-                    className="w-full rounded-md border border-[#E5E7EB] px-3 py-2 text-sm"
+                    className={ADMIN_INPUT_CLASS}
                   />
                 </div>
                 <div>
@@ -787,8 +1158,25 @@ export default function AdminPage() {
                     type="text"
                     value={form.headcount}
                     onChange={(e) => updateField("headcount", e.target.value)}
-                    className="w-full rounded-md border border-[#E5E7EB] px-3 py-2 text-sm"
+                    className={ADMIN_INPUT_CLASS}
                   />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs text-gray-500">
+                    {"\u8d5b\u9053\u5206\u7c7b"}
+                  </label>
+                  <select
+                    value={form.category}
+                    onChange={(e) => updateField("category", e.target.value)}
+                    className={ADMIN_INPUT_CLASS}
+                  >
+                    <option value="">{"\u8bf7\u9009\u62e9\u5206\u7c7b"}</option>
+                    {TRACK_CATEGORY_LIST.map((cat) => (
+                      <option key={cat} value={cat}>
+                        {cat}
+                      </option>
+                    ))}
+                  </select>
                 </div>
                 <div>
                   <label className="mb-1 block text-xs text-gray-500">
@@ -803,11 +1191,14 @@ export default function AdminPage() {
                   />
                 </div>
               </div>
-              <div className="mt-6 flex flex-col gap-2 border-t border-[#E5E7EB] pt-4">
+              <div className="mt-4">
+                <FrontPublishPreview form={form} sourceUrl={currentSourceUrl} />
+              </div>
+              <div className="mt-6 flex flex-col gap-2 border-t border-slate-200 pt-4">
                 <button
                   type="button"
                   onClick={handlePublish}
-                  className="w-full rounded-md bg-green-600 py-2.5 text-sm font-medium text-white hover:bg-green-700"
+                  className="w-full rounded-lg bg-slate-900 py-2.5 text-sm font-medium text-white hover:bg-slate-800"
                 >
                   {"\u4e00\u952e\u53d1\u5e03\u5230\u524d\u53f0"}
                 </button>
@@ -939,7 +1330,27 @@ export default function AdminPage() {
                             <p className="text-sm font-medium text-[#111827]">
                               {job.title}
                             </p>
-                            <p className="mt-1 text-xs text-gray-500">
+                            <select
+                              value={job.category || ""}
+                              onChange={(e) => {
+                                e.stopPropagation();
+                                void persistRawJobCategory(
+                                  job.id,
+                                  e.target.value,
+                                );
+                              }}
+                              onClick={(e) => e.stopPropagation()}
+                              disabled={isBatchExtracting}
+                              className="mt-1.5 w-full rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs text-slate-700 focus:border-slate-400 focus:outline-none disabled:opacity-50"
+                            >
+                              <option value="">未分类</option>
+                              {TRACK_CATEGORY_LIST.map((cat) => (
+                                <option key={cat} value={cat}>
+                                  {cat}
+                                </option>
+                              ))}
+                            </select>
+                            <p className="mt-1 text-xs text-slate-500">
                               {"\u53d1\u5e03 "}
                               {job.publishedAt || "-"}
                               {!hasContent && (
@@ -1000,55 +1411,200 @@ export default function AdminPage() {
             </aside>
           </div>
 
-          <section className="mx-auto max-w-[1800px] border-t border-[#E5E7EB] bg-[#F9FAFB] px-4 py-5 sm:px-6">
-            <h2 className="mb-3 text-xs font-semibold uppercase tracking-wide text-gray-500">
-              {"\u5df2\u53d1\u5e03\u5c97\u4f4d\uff08\u524d\u53f0 Job \u8868\uff09"}
-            </h2>
+          <section className="mx-auto max-w-[1800px] border-t border-slate-200 bg-slate-50 px-4 py-5 sm:px-6">
+            <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
+              <div>
+                <h2 className="text-sm font-semibold text-slate-900">
+                  已发布岗位
+                </h2>
+                <p className="mt-0.5 text-xs text-slate-500">
+                  与前台卡片同结构预览 · 过期岗位标黄（前台默认隐藏）
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <input
+                  type="search"
+                  value={publishedFilter.keyword}
+                  onChange={(e) =>
+                    setPublishedFilter((f) => ({
+                      ...f,
+                      keyword: e.target.value,
+                    }))
+                  }
+                  placeholder="搜索标题、专业…"
+                  className="w-48 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm focus:border-slate-400 focus:outline-none"
+                />
+                <select
+                  value={publishedFilter.category}
+                  onChange={(e) =>
+                    setPublishedFilter((f) => ({
+                      ...f,
+                      category: e.target.value,
+                    }))
+                  }
+                  className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm focus:border-slate-400 focus:outline-none"
+                >
+                  <option value="全部">全部分类</option>
+                  {TRACK_CATEGORY_LIST.map((cat) => (
+                    <option key={cat} value={cat}>
+                      {cat}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
             {listLoading ? (
-              <p className="text-sm text-gray-500">{"\u52a0\u8f7d\u4e2d..."}</p>
+              <p className="text-sm text-slate-500">加载中…</p>
             ) : publishedJobs.length === 0 ? (
-              <p className="text-sm text-gray-500">
-                {"\u6682\u65e0\u5df2\u53d1\u5e03\u5c97\u4f4d"}
-              </p>
+              <p className="text-sm text-slate-500">暂无已发布岗位</p>
+            ) : filteredPublishedJobs.length === 0 ? (
+              <p className="text-sm text-slate-500">没有匹配的岗位</p>
             ) : (
-              <ul className="space-y-2">
-                {publishedJobs.map((job) => (
-                  <li
+              <ul className="grid gap-2 lg:grid-cols-2">
+                {filteredPublishedJobs.map((job) => (
+                  <PublishedJobCard
                     key={job.id}
-                    className="flex items-center justify-between gap-4 rounded-lg border border-[#E5E7EB] bg-white px-4 py-3"
-                  >
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate text-sm font-medium text-[#111827]">
-                        {job.title}
-                      </p>
-                      <p className="mt-1 text-xs text-gray-500">
-                        {job.deadline || "-"} / {job.slots} / {job.majors}
-                      </p>
-                    </div>
-                    {job.sourceUrl ? (
-                      <a
-                        href={job.sourceUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="shrink-0 rounded-md border border-[#E5E7EB] bg-white px-2.5 py-1.5 text-xs text-gray-600 transition-colors hover:border-gray-300 hover:bg-gray-50"
-                      >
-                        {"\ud83d\udd17 \u67e5\u770b\u539f\u6587"}
-                      </a>
-                    ) : null}
-                    <button
-                      type="button"
-                      onClick={() => handleDeleteJob(job.id)}
-                      disabled={deletingId === job.id}
-                      className="shrink-0 rounded-md bg-red-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-red-700 disabled:opacity-60"
-                    >
-                      {deletingId === job.id ? "..." : "\u4e0b\u67b6"}
-                    </button>
-                  </li>
+                    job={job}
+                    deleting={deletingId === job.id}
+                    onTrash={handleDeleteJob}
+                  />
                 ))}
               </ul>
             )}
           </section>
         </>
+      )}
+
+      {unlocked && adminTab === "trash" && (
+        <section className="mx-auto max-w-[1800px] border-t border-slate-200 px-4 py-6 sm:px-6">
+          <div className="mb-4 flex items-center justify-between">
+            <div>
+              <h2 className="text-sm font-semibold text-slate-900">
+                智能垃圾桶
+              </h2>
+              <p className="mt-1 text-xs text-slate-500">
+                过期 7 天自动软删除 · 在桶满 7 天物理蒸发
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={loadTrash}
+              disabled={trashLoading}
+              className="text-xs text-gray-500 hover:text-[#111827] disabled:opacity-50"
+            >
+              {trashLoading ? "\u5237\u65b0\u4e2d..." : "\u5237\u65b0"}
+            </button>
+          </div>
+          {extractError && (
+            <p className="mb-3 text-xs text-red-600">{extractError}</p>
+          )}
+          {actionMsg && (
+            <p className="mb-3 text-xs text-green-700">{actionMsg}</p>
+          )}
+          {trashLoading ? (
+            <p className="text-sm text-gray-500">{"\u52a0\u8f7d\u4e2d..."}</p>
+          ) : trashJobs.length === 0 && trashRawJobs.length === 0 ? (
+            <p className="text-sm text-gray-500">{"\u5783\u573e\u7bb1\u662f\u7a7a\u7684\uff0c\u5f88\u5e72\u51c0\uff01"}</p>
+          ) : (
+            <div className="grid gap-6 lg:grid-cols-2">
+              <div>
+                <h3 className="mb-2 text-xs font-semibold text-gray-500">
+                  {`\u5df2\u53d1\u5e03\u5c97\u4f4d (${trashJobs.length})`}
+                </h3>
+                <ul className="space-y-2">
+                  {trashJobs.map((job) => (
+                    <li
+                      key={job.id}
+                      className="rounded-lg border border-[#E5E7EB] bg-white px-3 py-2"
+                    >
+                      <p className="text-sm font-medium text-[#111827]">
+                        {job.title}
+                      </p>
+                      <p className="mt-1 text-xs text-gray-500">
+                        {job.deadline || "-"} ·{" "}
+                        {job.deletedAt
+                          ? new Date(job.deletedAt).toLocaleString("zh-CN")
+                          : "-"}
+                      </p>
+                      <div className="mt-2 flex gap-2">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            handleTrashAction("job", job.id, "restore")
+                          }
+                          disabled={
+                            trashActionId === `job-${job.id}-restore`
+                          }
+                          className="rounded-md bg-green-600 px-2 py-1 text-xs text-white hover:bg-green-700 disabled:opacity-50"
+                        >
+                          {"\ud83d\udfe2 \u6062\u590d"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            handleTrashAction("job", job.id, "purge")
+                          }
+                          disabled={trashActionId === `job-${job.id}-purge`}
+                          className="rounded-md bg-red-600 px-2 py-1 text-xs text-white hover:bg-red-700 disabled:opacity-50"
+                        >
+                          {"\ud83d\udd34 \u5f7b\u5e95\u5220\u9664"}
+                        </button>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+              <div>
+                <h3 className="mb-2 text-xs font-semibold text-gray-500">
+                  {`\u5f85\u5904\u7406\u539f\u59cb\u516c\u544a (${trashRawJobs.length})`}
+                </h3>
+                <ul className="space-y-2">
+                  {trashRawJobs.map((job) => (
+                    <li
+                      key={job.id}
+                      className="rounded-lg border border-[#E5E7EB] bg-white px-3 py-2"
+                    >
+                      <p className="text-sm font-medium text-[#111827]">
+                        {job.title}
+                      </p>
+                      <p className="mt-1 text-xs text-gray-500">
+                        {job.deletedAt
+                          ? new Date(job.deletedAt).toLocaleString("zh-CN")
+                          : "-"}
+                      </p>
+                      <div className="mt-2 flex gap-2">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            handleTrashAction("rawJob", job.id, "restore")
+                          }
+                          disabled={
+                            trashActionId === `rawJob-${job.id}-restore`
+                          }
+                          className="rounded-md bg-green-600 px-2 py-1 text-xs text-white hover:bg-green-700 disabled:opacity-50"
+                        >
+                          {"\ud83d\udfe2 \u6062\u590d"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            handleTrashAction("rawJob", job.id, "purge")
+                          }
+                          disabled={
+                            trashActionId === `rawJob-${job.id}-purge`
+                          }
+                          className="rounded-md bg-red-600 px-2 py-1 text-xs text-white hover:bg-red-700 disabled:opacity-50"
+                        >
+                          {"\ud83d\udd34 \u5f7b\u5e95\u5220\u9664"}
+                        </button>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </div>
+          )}
+        </section>
       )}
     </div>
   );
