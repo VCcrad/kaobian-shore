@@ -1,14 +1,47 @@
+"use client";
+
 import Link from "next/link";
+import { useEffect, useState } from "react";
+import {
+  readUserProfileFromStorage,
+  USER_PROFILE_STORAGE_KEY,
+} from "@/lib/user-profile-client";
 
 const PLACEHOLDER_NAV = [
   { label: "空位1", href: "#" },
   { label: "空位2", href: "#" },
   { label: "空位3", href: "#" },
   { label: "空位4", href: "#" },
-  { label: "空位5", href: "#" },
 ];
 
+const SLOT5_LINK_CLASS =
+  "rounded-full bg-[#15803D] px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-[#166534]";
+
 export default function SiteNav({ activePath = "/" }) {
+  const [hasProfile, setHasProfile] = useState(false);
+
+  useEffect(() => {
+    function syncProfileState() {
+      setHasProfile(Boolean(readUserProfileFromStorage()));
+    }
+
+    syncProfileState();
+
+    function handleStorage(event) {
+      if (event.key === USER_PROFILE_STORAGE_KEY || event.key === null) {
+        syncProfileState();
+      }
+    }
+
+    window.addEventListener("storage", handleStorage);
+    window.addEventListener("focus", syncProfileState);
+
+    return () => {
+      window.removeEventListener("storage", handleStorage);
+      window.removeEventListener("focus", syncProfileState);
+    };
+  }, []);
+
   return (
     <nav className="sticky top-0 z-50 border-b border-slate-200 bg-white">
       <div className="mx-auto flex min-h-14 max-w-6xl items-center justify-between gap-4 px-4 py-2.5 sm:px-6">
@@ -50,6 +83,15 @@ export default function SiteNav({ activePath = "/" }) {
               {item.label}
             </Link>
           ))}
+          {hasProfile ? (
+            <Link href="/profile" className={SLOT5_LINK_CLASS}>
+              个人资料
+            </Link>
+          ) : (
+            <Link href="/login" className={SLOT5_LINK_CLASS}>
+              登录
+            </Link>
+          )}
         </div>
       </div>
     </nav>

@@ -27,12 +27,12 @@
             "state": {
               "type": "markdown",
               "state": {
-                "file": "我自己的思考.md",
+                "file": "爬虫相关.md",
                 "mode": "source",
                 "source": false
               },
               "icon": "lucide-file",
-              "title": "我自己的思考"
+              "title": "爬虫相关"
             }
           }
         ],
@@ -200,8 +200,10 @@
   },
   "active": "4290514cacf3bc6f",
   "lastOpenFiles": [
-    "未来可能的问题.md",
+    "全量模式和增量模式.md",
+    "爬虫相关.md",
     "我自己的思考.md",
+    "未来可能的问题.md",
     "总览.md",
     "5.16 v3.md",
     "5.16 v4.md",

@@ -10,6 +10,7 @@
     "start": "next start",
     "lint": "eslint",
     "seed:hunan": "tsx scripts/seed-hunan-parse.ts",
+    "crawler": "tsx scripts/crawler.ts",
     "spider:safe": "node scripts/spider-safe.js"
   },
   "dependencies": {

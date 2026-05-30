@@ -107,8 +107,20 @@ model JobPosting {
   rawText      String? // 原始文本，供 AI 和溯源使用
   sourceUrl    String // 官网原始链接
   matchStatus  String? // PERFECT | CONFLICT | NORMAL （后续使用）
+  isDeleted    Boolean   @default(false)
+  deletedAt    DateTime?
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
 
   @@map("job_postings")
+}
+
+/** 站点基本设置（单行 id=default） */
+model SiteSettings {
+  id               String   @id @default("default")
+  /** 截止日后超过该天数自动移入垃圾桶 */
+  archiveGraceDays Int      @default(5)
+  updatedAt        DateTime @updatedAt
+
+  @@map("site_settings")
 }

@@ -15,8 +15,16 @@ import {
   buildJobPostingDisplayText,
   isGarbledText,
   sanitizeJobPostingTitle,
+  sanitizeOrganizationName,
+  pickJobCardTitle,
+  formatJobCardDisplayTitle,
 } from "@/lib/job-posting-text.js";
+import { buildJobCardDisplayFields } from "@/lib/job-card-fields.js";
 import { matchJobPostings } from "@/lib/match-service";
+import {
+  isNavigationMenuText,
+  hasNonRecruitmentTitleSignal,
+} from "@/lib/recruitment-announcement-filters.js";
 
 const require = createRequire(import.meta.url);
 const {
@@ -29,13 +37,19 @@ const {
 const { runTrashJanitor } = require("../../../lib/trash-janitor.cjs");
 const execFileAsync = promisify(execFile);
 
-const JOB_POSTING_TAKE = 50;
-
 function formatDateOnly(value) {
   if (!value) return null;
   const date = value instanceof Date ? value : new Date(value);
   if (Number.isNaN(date.getTime())) return null;
   return date.toISOString().slice(0, 10);
+}
+
+async function fetchJobPostings() {
+  return prisma.jobPosting.findMany({
+    where: { isDeleted: false },
+    include: { source: true },
+    orderBy: { publishDate: "desc" },
+  });
 }
 
 function calcDaysLeftLabel(deadline) {
@@ -108,6 +122,21 @@ function resolveMatchFields(job) {
   };
 }
 
+function resolveJobCardTitle(job, other = {}, organization = "") {
+  const base = pickJobCardTitle({
+    title: job.title,
+    announcementTitle: other.announcementTitle,
+    rawText: job.rawText,
+    organization,
+    sourceName: job.source?.name,
+  });
+  return formatJobCardDisplayTitle(base, {
+    announcementTitle: other.announcementTitle,
+    fallbackTitle: job.title,
+    rawText: job.rawText,
+  });
+}
+
 function mapJobPostingToFormatted(job) {
   const requirements = asRequirementsObject(job.requirements);
   const other =
@@ -118,7 +147,7 @@ function mapJobPostingToFormatted(job) {
 
   return {
     id: job.id,
-    title: sanitizeJobPostingTitle(job.title, "未命名岗位"),
+    title: resolveJobCardTitle(job, other),
     province: job.province,
     sourceName: job.source?.name ?? null,
     sourceUrl: job.sourceUrl,
@@ -141,32 +170,43 @@ function mapJobPostingToMiniProgramCard(job) {
     requirements.other && typeof requirements.other === "object"
       ? requirements.other
       : {};
-  const majorRequirements = Array.isArray(requirements.majorRequirements)
-    ? requirements.majorRequirements
-    : requirements.majorRequirements
-      ? [String(requirements.majorRequirements)]
-      : [];
-  const majorRequirement =
-    majorRequirements.length > 0 ? majorRequirements.join("、") : "—";
-  const deadlineStr = formatDateOnly(job.deadline) ?? "—";
-  const { daysLeft, daysLeftLabel } = calcDaysLeftLabel(job.deadline);
+  const sourceName = job.source?.name ?? "";
+  const organization = sanitizeOrganizationName(
+    other.organization || sourceName,
+    sourceName,
+  );
   const text = buildJobPostingDisplayText(job, requirements, {
     ...other,
-    organization: other.organization || job.source?.name || "",
+    organization,
   });
+  const cardFields = buildJobCardDisplayFields({
+    job: { ...job, source: job.source },
+    requirements,
+    other: {
+      ...other,
+      organization,
+    },
+    text,
+  });
+  const deadlineStr = formatDateOnly(job.deadline) ?? "—";
+  const { daysLeft, daysLeftLabel } = calcDaysLeftLabel(job.deadline);
   const { matchStatus, conflictReasons } = resolveMatchFields(job);
 
   return {
     id: job.id,
     publishDate: formatDateOnly(job.publishDate) ?? "",
-    organization: other.organization || job.source?.name || "",
-    title: sanitizeJobPostingTitle(job.title, "未命名岗位"),
-    provinceCity: job.province ? `${job.province}` : "—",
-    slots: other.slots ?? null,
-    slotsLabel: other.slots ? `${other.slots} 人` : "—",
-    education: other.education || "—",
-    majorRequirement,
-    ageRequirement: requirements.ageLimit || "—",
+    organization,
+    title: resolveJobCardTitle(job, other, organization),
+    provinceCity: cardFields.provinceCity,
+    slots: cardFields.slots,
+    slotsLabel: cardFields.slotsLabel || "—",
+    education: cardFields.education || "—",
+    majorRequirement: cardFields.majorRequirement || "—",
+    ageRequirement: cardFields.ageRequirement || "—",
+    politicalRequirement: cardFields.politicalRequirement || "—",
+    certificateRequirements: cardFields.certificateRequirements,
+    specialRequirements: cardFields.specialRequirements || "—",
+    otherRequirements: cardFields.otherRequirements || "—",
     deadline: deadlineStr,
     daysLeft,
     daysLeftLabel,
@@ -180,21 +220,30 @@ function mapJobPostingToMiniProgramCard(job) {
   };
 }
 
-async function fetchJobPostings(take = JOB_POSTING_TAKE) {
-  return prisma.jobPosting.findMany({
-    include: { source: true },
-    orderBy: { publishDate: "desc" },
-    take,
-  });
-}
-
 /** GET /api/jobs — JobPosting 结构化列表（新数据源） */
 async function getJobPostingsResponse(format, searchParams) {
+  await runTrashJanitor(prisma);
+
   const profile = parseUserProfileFromSearchParams(searchParams);
   const allJobs = await fetchJobPostings();
-  let jobs = allJobs.filter(
-    (job) => !isGarbledText(job.title) && sanitizeJobPostingTitle(job.title),
-  );
+  let jobs = allJobs.filter((job) => {
+    const req = asRequirementsObject(job.requirements);
+    const other =
+      req.other && typeof req.other === "object" ? req.other : {};
+    const org = sanitizeOrganizationName(
+      other.organization || job.source?.name || "",
+      job.source?.name || "",
+    );
+    const title = resolveJobCardTitle(job, other, org);
+    if (!title) return false;
+    const listTitle = other.announcementTitle || job.title || "";
+    if (isNavigationMenuText(title) || isNavigationMenuText(listTitle)) return false;
+    if (hasNonRecruitmentTitleSignal(listTitle) || hasNonRecruitmentTitleSignal(title)) {
+      return false;
+    }
+    if (isGarbledText(title) || isGarbledText(listTitle)) return false;
+    return Boolean(org || title);
+  });
 
   if (profile) {
     jobs = matchJobPostings(profile, jobs);

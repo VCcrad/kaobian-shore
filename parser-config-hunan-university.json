@@ -1,0 +1,25 @@
+{
+  "type": "hunan-university",
+  "linkMustInclude": "/info/",
+  "listSelector": "ul.list li, .news-list li, .newslist li, .news_list li, .xxgk-list li, table tr",
+  "linkSelector": "a",
+  "dateSelector": "span, .time, .date, td:last-child",
+  "detailContentSelectors": [
+    "#vsb_content",
+    ".v_news_content",
+    ".wp_articlecontent",
+    ".TRS_Editor",
+    ".view-content",
+    ".news-content",
+    ".article",
+    ".content-main",
+    "#article",
+    ".xxgk-content",
+    ".content",
+    "#content",
+    "article",
+    ".main"
+  ],
+  "maxListItems": 20,
+  "requestDelayMs": 1500
+}

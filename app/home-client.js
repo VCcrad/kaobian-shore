@@ -1,12 +1,17 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import SiteNav from "@/components/site-nav";
 import { EDUCATION_FILTER_OPTIONS } from "@/lib/mock-jobs";
 import { CHINA_PROVINCE_LIST, getCitiesForProvince } from "@/lib/china-regions";
 import { jobMatchesRegion } from "@/lib/location-utils";
 import { TRACK_CATEGORY_LIST } from "@/lib/track-category-client";
 import { calcDaysLeft } from "@/lib/job-utils";
+import {
+  DEFAULT_USER_PROFILE,
+  readUserProfileFromStorage,
+  USER_PROFILE_STORAGE_KEY,
+} from "@/lib/user-profile-client";
 
 const PAGE_SIZE = 20;
 
@@ -27,52 +32,217 @@ const TRACK_BADGE_STYLES = {
   地方编制求职: "border-emerald-200 bg-emerald-50 text-emerald-700",
 };
 
-/** 未来用户画像：专业、年龄上限、意向城市等 */
-const DEFAULT_USER_PROFILE = null;
+const AGE_LIMIT_PATTERNS = [
+  /(\d{1,3})\s*周岁以下/u,
+  /不超过\s*(\d{1,3})\s*周岁/u,
+  /(\d{1,3})\s*周岁\s*及\s*以下/u,
+  /(\d{1,3})\s*岁\s*及\s*以下/u,
+  /年龄\s*(?:在\s*)?(\d{1,3})\s*周岁/u,
+];
 
-function thresholdChipClass(mismatch) {
-  if (mismatch) {
-    return "bg-red-50 px-1 py-0.5 font-medium text-red-700 rounded";
+const PARTY_REQUIRED_KEYWORDS = [
+  "中共党员",
+  "限党员",
+  "面向党员",
+  "须为中共党员",
+  "须中共党员",
+  "限中共党员",
+];
+
+function normalizeConflictReasons(reasons) {
+  if (!Array.isArray(reasons)) return [];
+  return reasons
+    .map((item) => String(item ?? "").trim())
+    .filter(Boolean);
+}
+
+function hasServerMatchStatus(status) {
+  const value = String(status ?? "");
+  return value === "PERFECT" || value === "CONFLICT" || value === "NORMAL";
+}
+
+function buildJobsApiUrl(userProfile) {
+  const profile = userProfile || DEFAULT_USER_PROFILE;
+  const politicalStatus = profile.isPartyMember ? "党员" : "群众";
+  const params = new URLSearchParams({
+    format: "jobs",
+    match: "1",
+    age: String(profile.age ?? 28),
+    major: String(profile.major ?? profile.majors ?? ""),
+    politicalStatus,
+    isPartyMember: profile.isPartyMember ? "1" : "0",
+  });
+  return `/api/jobs?${params.toString()}`;
+}
+
+function parseAgeLimit(jobText) {
+  for (const pattern of AGE_LIMIT_PATTERNS) {
+    const match = jobText.match(pattern);
+    if (match && match[1] != null) {
+      const limit = Number.parseInt(match[1], 10);
+      if (Number.isFinite(limit) && limit > 0 && limit < 200) {
+        return limit;
+      }
+    }
   }
-  return "bg-slate-50/80 px-1 py-0.5 text-slate-600 rounded";
+  return null;
 }
 
-/** 专业是否与用户画像不符（无画像时恒为 false，仅占位） */
-function isMajorsMismatch(job, userProfile) {
-  if (!userProfile) return false;
-  const pref = userProfile.majors ?? userProfile.major;
-  if (pref == null || String(pref).trim() === "") return false;
+/** 本地 Matcher 回退（与 utils/matcher.js 一致） */
+function localCalculateMatchStatus(userProfile, jobText) {
+  const profile = userProfile || DEFAULT_USER_PROFILE;
+  const text = String(jobText ?? "").trim();
+  const conflictReasons = [];
 
-  const jobText = String(job.majors ?? "").trim().toLowerCase();
-  if (!jobText || jobText.includes("不限")) return false;
+  if (!text) {
+    return { matchStatus: "NORMAL", conflictReasons };
+  }
 
-  const tokens = String(pref)
-    .split(/[、,，/|\s]+/)
-    .map((s) => s.trim().toLowerCase())
-    .filter((s) => s.length > 1);
+  const ageLimit = parseAgeLimit(text);
+  const userAge = Number(profile.age);
+  if (ageLimit != null && Number.isFinite(userAge) && userAge > ageLimit) {
+    conflictReasons.push(`年龄超限（岗位限 ${ageLimit} 周岁以下）`);
+  }
 
-  if (tokens.length === 0) return false;
-  return !tokens.some((token) => jobText.includes(token));
+  const requiresParty = PARTY_REQUIRED_KEYWORDS.some((kw) => text.includes(kw));
+  if (requiresParty && profile.isPartyMember === false) {
+    conflictReasons.push("政治面貌不符（该岗位限中共党员）");
+  }
+
+  if (conflictReasons.length > 0) {
+    return { matchStatus: "CONFLICT", conflictReasons };
+  }
+
+  const major = String(profile.major ?? profile.majors ?? "").trim();
+  if (major && text.includes(major)) {
+    return { matchStatus: "PERFECT", conflictReasons: [] };
+  }
+
+  return { matchStatus: "NORMAL", conflictReasons: [] };
 }
 
-/** 年龄是否与用户画像不符（解析「N周岁以下」等常见表述） */
-function isAgeMismatch(job, userProfile) {
-  if (!userProfile) return false;
-  const userMax =
-    userProfile.maxAge ?? userProfile.ageLimit ?? userProfile.age;
-  if (userMax == null || userMax === "") return false;
+function resolveJobMatch(userProfile, job) {
+  if (hasServerMatchStatus(job.matchStatus)) {
+    return {
+      matchStatus: job.matchStatus,
+      conflictReasons: normalizeConflictReasons(job.conflictReasons),
+    };
+  }
 
-  const req = String(job.ageRequirement ?? "");
-  const capMatch = req.match(/(\d+)\s*周岁\s*以[下内]/);
-  if (!capMatch) return false;
+  const text = String(job.text || job.content || job.title || "").trim();
+  return localCalculateMatchStatus(userProfile, text);
+}
 
-  const jobMaxAge = Number.parseInt(capMatch[1], 10);
-  if (Number.isNaN(jobMaxAge)) return false;
+function parseSlotsFromJob(job) {
+  if (typeof job.slots === "number" && job.slots > 0) return job.slots;
+  const label = String(job.slotsLabel ?? "");
+  const match = label.match(/(\d+)/);
+  return match ? Number.parseInt(match[1], 10) : 0;
+}
 
-  const userAge = Number(userMax);
-  if (Number.isNaN(userAge)) return false;
+function pickDisplayField(value) {
+  const text = String(value ?? "").trim();
+  if (!text || text === "—") return "";
+  return text;
+}
 
-  return userAge > jobMaxAge;
+function pickMajorDisplay(value) {
+  const text = pickDisplayField(value);
+  if (!text || text === "详见官网原文") return "无要求";
+  return text;
+}
+
+function normalizeApiJobToHomeCard(apiJob, userProfile) {
+  const text = String(apiJob.text || apiJob.rawText || apiJob.title || "").trim();
+  const base = {
+    id: apiJob.id,
+    organization: apiJob.organization || apiJob.sourceName || "招聘单位",
+    title: apiJob.title || "未命名岗位",
+    publishDate: apiJob.publishDate || "",
+    deadline: pickDisplayField(apiJob.deadline),
+    category: apiJob.category || "",
+    provinceCity: pickDisplayField(apiJob.provinceCity) || "待定",
+    slots: parseSlotsFromJob(apiJob),
+    slotsLabel: pickDisplayField(apiJob.slotsLabel),
+    majors: pickMajorDisplay(apiJob.majorRequirement),
+    ageRequirement: pickDisplayField(apiJob.ageRequirement),
+    education: pickDisplayField(apiJob.education),
+    politicalRequirement: pickDisplayField(apiJob.politicalRequirement),
+    certificateRequirements: Array.isArray(apiJob.certificateRequirements)
+      ? apiJob.certificateRequirements
+      : [],
+    specialRequirements: pickDisplayField(
+      apiJob.otherRequirements || apiJob.specialRequirements,
+    ),
+    summary: text.slice(0, 300) || "暂无摘要",
+    content: text,
+    sourceUrl: apiJob.sourceUrl || "",
+    text,
+    matchStatus: apiJob.matchStatus,
+    conflictReasons: apiJob.conflictReasons,
+  };
+
+  const match = resolveJobMatch(userProfile, base);
+  return {
+    ...base,
+    matchStatus: match.matchStatus,
+    conflictReasons: match.conflictReasons,
+  };
+}
+
+function RequirementChip({ label, value, title }) {
+  if (!value) return null;
+  return (
+    <span
+      className="inline-flex max-w-full items-start gap-1 rounded border border-slate-200/60 bg-slate-50/90 px-1.5 py-0.5 text-slate-600"
+      title={title || label}
+    >
+      <span className="shrink-0 text-slate-400">{label}</span>
+      <span className="min-w-0 break-words font-medium text-slate-700">{value}</span>
+    </span>
+  );
+}
+
+function ThresholdRow({ job }) {
+  const slotsText =
+    job.slots > 0
+      ? `${job.slots} 人`
+      : job.slotsLabel && job.slotsLabel !== "—"
+        ? job.slotsLabel
+        : "";
+
+  const otherRequirements = pickDisplayField(
+    job.specialRequirements || job.otherRequirements,
+  );
+
+  return (
+    <div className="mt-2 space-y-1.5">
+      <div className="flex flex-wrap gap-1.5 text-xs leading-snug">
+        <RequirementChip
+          label="省市"
+          value={job.provinceCity || "待定"}
+          title="工作省市"
+        />
+        <RequirementChip
+          label="招聘"
+          value={
+            slotsText ? `${slotsText.replace(/\s*人\s*$/, "")} 人` : ""
+          }
+          title="招聘人数"
+        />
+        <RequirementChip label="年龄" value={job.ageRequirement} title="年龄要求" />
+        <RequirementChip label="学历" value={job.education} title="学历要求" />
+      </div>
+      <div className="flex flex-wrap gap-1.5 text-xs leading-snug">
+        <RequirementChip label="专业要求" value={job.majors} title="专业要求" />
+        <RequirementChip
+          label="其他要求"
+          value={otherRequirements}
+          title="资格证、职称、语言等级等"
+        />
+      </div>
+    </div>
+  );
 }
 
 function TrackBadge({ category }) {
@@ -86,48 +256,6 @@ function TrackBadge({ category }) {
     >
       {category}
     </span>
-  );
-}
-
-function ThresholdRow({ job, userProfile = DEFAULT_USER_PROFILE }) {
-  const majorsMismatch = isMajorsMismatch(job, userProfile);
-  const ageMismatch = isAgeMismatch(job, userProfile);
-  const slots = job.slots ?? 0;
-
-  return (
-    <div className="mt-1.5 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs leading-snug">
-      <span className="rounded border border-slate-200/40 bg-slate-100 px-1.5 py-0.5 font-medium text-slate-700">
-        {job.provinceCity || "地点待定"}
-      </span>
-      <span className="select-none text-slate-300" aria-hidden>
-        ·
-      </span>
-      <span className="text-slate-500">
-        招聘{" "}
-        <span className="font-semibold tabular-nums text-slate-900">{slots}</span>{" "}
-        人
-      </span>
-      {job.majors ? (
-        <>
-          <span className="select-none text-slate-300" aria-hidden>
-            ·
-          </span>
-          <span className={thresholdChipClass(majorsMismatch)} title="专业要求">
-            {job.majors}
-          </span>
-        </>
-      ) : null}
-      {job.ageRequirement ? (
-        <>
-          <span className="select-none text-slate-300" aria-hidden>
-            ·
-          </span>
-          <span className={thresholdChipClass(ageMismatch)} title="年龄要求">
-            {job.ageRequirement}
-          </span>
-        </>
-      ) : null}
-    </div>
   );
 }
 
@@ -164,9 +292,9 @@ function jobMatchesEducation(job, educationFilter) {
   if (educationFilter === "全部") return true;
   const edu = String(job.education ?? "");
   if (educationFilter === "博士") return edu.includes("博士");
-  if (educationFilter === "硕士") return edu.includes("硕士") || edu.includes("研究生");
+  if (educationFilter === "硕士") return edu.includes("硕士");
   if (educationFilter === "本科") return edu.includes("本科");
-  if (educationFilter === "大专") return edu.includes("大专") || edu.includes("专科");
+  if (educationFilter === "大专") return edu.includes("大专");
   return true;
 }
 
@@ -196,6 +324,9 @@ function filterJobs(jobs, filters) {
       job.summary,
       job.content,
       job.education,
+      job.politicalRequirement,
+      job.specialRequirements,
+      job.certificateRequirements?.join(" "),
     ]
       .join(" ")
       .toLowerCase();
@@ -276,14 +407,70 @@ function JobPagination({ page, totalPages, totalItems, onPageChange }) {
   );
 }
 
-export default function HomeClient({
-  initialJobs = [],
-  userProfile = DEFAULT_USER_PROFILE,
-}) {
+export default function HomeClient() {
+  const [userProfile, setUserProfile] = useState(DEFAULT_USER_PROFILE);
+  const [profileReady, setProfileReady] = useState(false);
+  const [jobs, setJobs] = useState([]);
+  const [loading, setLoading] = useState(true);
   const [draft, setDraft] = useState(EMPTY_FILTERS);
   const [applied, setApplied] = useState(EMPTY_FILTERS);
   const [expandedId, setExpandedId] = useState(null);
   const [currentPage, setCurrentPage] = useState(1);
+
+  useEffect(() => {
+    const saved = readUserProfileFromStorage();
+    if (saved) {
+      setUserProfile(saved);
+    }
+    setProfileReady(true);
+  }, []);
+
+  useEffect(() => {
+    if (!profileReady) return undefined;
+
+    function syncProfileFromStorage() {
+      const saved = readUserProfileFromStorage();
+      setUserProfile(saved || DEFAULT_USER_PROFILE);
+    }
+
+    function handleStorage(event) {
+      if (event.key === USER_PROFILE_STORAGE_KEY || event.key === null) {
+        syncProfileFromStorage();
+      }
+    }
+
+    window.addEventListener("storage", handleStorage);
+    window.addEventListener("focus", syncProfileFromStorage);
+
+    return () => {
+      window.removeEventListener("storage", handleStorage);
+      window.removeEventListener("focus", syncProfileFromStorage);
+    };
+  }, [profileReady]);
+
+  const loadJobs = useCallback(async () => {
+    if (!profileReady) return;
+
+    setLoading(true);
+    try {
+      const res = await fetch(buildJobsApiUrl(userProfile), { cache: "no-store" });
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}`);
+      }
+      const payload = await res.json();
+      const list = Array.isArray(payload?.data) ? payload.data : [];
+      setJobs(list.map((job) => normalizeApiJobToHomeCard(job, userProfile)));
+    } catch (err) {
+      console.error("[首页] 拉取岗位失败:", err);
+      setJobs([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [profileReady, userProfile]);
+
+  useEffect(() => {
+    loadJobs();
+  }, [loadJobs]);
 
   const draftCityOptions = useMemo(() => {
     if (draft.province === "全部") return ["全部"];
@@ -291,8 +478,8 @@ export default function HomeClient({
   }, [draft.province]);
 
   const filteredJobs = useMemo(
-    () => filterJobs(initialJobs, applied),
-    [initialJobs, applied],
+    () => filterJobs(jobs, applied),
+    [jobs, applied],
   );
 
   const totalPages = Math.max(1, Math.ceil(filteredJobs.length / PAGE_SIZE));
@@ -497,7 +684,7 @@ export default function HomeClient({
                   </div>
                 </div>
 
-                <ThresholdRow job={job} userProfile={userProfile} />
+                <ThresholdRow job={job} />
                 <DeadlineLine job={job} />
 
                 {open ? (
@@ -509,11 +696,6 @@ export default function HomeClient({
                       <p className="text-sm leading-relaxed text-slate-600">
                         {job.summary}
                       </p>
-                      {job.education ? (
-                        <p className="mt-2 text-xs text-slate-500">
-                          学历要求：{job.education}
-                        </p>
-                      ) : null}
                     </div>
                   </div>
                 ) : null}
@@ -534,7 +716,7 @@ export default function HomeClient({
           })}
         </ul>
 
-        {initialJobs.length === 0 ? (
+        {!loading && jobs.length === 0 ? (
           <p className="mt-10 text-center text-sm text-slate-500">
             暂无已发布岗位。请先在{" "}
             <a href="/admin" className="text-slate-700 underline underline-offset-2">
@@ -542,18 +724,22 @@ export default function HomeClient({
             </a>{" "}
             发布职位，并确认截止日期未过期。
           </p>
-        ) : filteredJobs.length === 0 ? (
+        ) : !loading && filteredJobs.length === 0 ? (
           <p className="mt-10 text-center text-sm text-slate-500">
             没有匹配的岗位，试试调整筛选条件
           </p>
-        ) : (
+        ) : filteredJobs.length > 0 ? (
           <JobPagination
             page={page}
             totalPages={totalPages}
             totalItems={filteredJobs.length}
             onPageChange={goToPage}
           />
-        )}
+        ) : null}
+
+        <p className="mt-10 border-t border-slate-200 pt-6 text-center text-xs leading-relaxed text-slate-400">
+          请以各单位官方公告为准 · 数据来源于公开政府及高校网站
+        </p>
       </main>
     </div>
   );

@@ -1,22 +1,57 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import {
+  resolveJobCardTitle,
+  sanitizeOrganizationName,
+} from "@/lib/job-posting-text.js";
+
+const { runTrashJanitor } = require("../../../../lib/trash-janitor.cjs");
 
 export const dynamic = "force-dynamic";
 
+function formatDateOnly(value) {
+  if (!value) return "";
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toISOString().slice(0, 10);
+}
+
+function mapJobPosting(job) {
+  const requirements =
+    job.requirements && typeof job.requirements === "object"
+      ? job.requirements
+      : {};
+  const other =
+    requirements.other && typeof requirements.other === "object"
+      ? requirements.other
+      : {};
+  const sourceName = job.source?.name ?? "";
+  const organization = sanitizeOrganizationName(
+    other.organization || sourceName,
+    sourceName,
+  );
+
+  return {
+    id: job.id,
+    title: resolveJobCardTitle(job, other, organization),
+    sourceName,
+    deadline: formatDateOnly(job.deadline),
+    sourceUrl: job.sourceUrl,
+    deletedAt: job.deletedAt,
+  };
+}
+
 export async function GET() {
   try {
-    const [jobs, rawJobs] = await Promise.all([
-      prisma.job.findMany({
-        where: { isDeleted: true },
-        orderBy: { deletedAt: "desc" },
-      }),
-      prisma.rawJob.findMany({
-        where: { isDeleted: true },
-        orderBy: { deletedAt: "desc" },
-      }),
-    ]);
+    await runTrashJanitor(prisma);
 
-    return NextResponse.json({ jobs, rawJobs });
+    const jobs = await prisma.jobPosting.findMany({
+      where: { isDeleted: true },
+      include: { source: true },
+      orderBy: { deletedAt: "desc" },
+    });
+
+    return NextResponse.json({ jobs: jobs.map(mapJobPosting) });
   } catch (err) {
     return NextResponse.json(
       { error: "读取垃圾桶失败", details: err?.message },
@@ -33,18 +68,10 @@ export async function PATCH(request) {
     return NextResponse.json({ error: "请求体必须是 JSON" }, { status: 400 });
   }
 
-  const entity = String(body?.entity ?? "").trim();
-  const id = Number(body?.id);
+  const id = String(body?.id ?? "").trim();
   const action = String(body?.action ?? "").trim();
 
-  if (!entity || !["job", "rawJob"].includes(entity)) {
-    return NextResponse.json(
-      { error: "entity 须为 job 或 rawJob" },
-      { status: 400 },
-    );
-  }
-
-  if (!id || Number.isNaN(id)) {
+  if (!id) {
     return NextResponse.json({ error: "缺少有效的 id" }, { status: 400 });
   }
 
@@ -56,15 +83,7 @@ export async function PATCH(request) {
   }
 
   try {
-    if (entity === "job") {
-      const updated = await prisma.job.update({
-        where: { id },
-        data: { isDeleted: false, deletedAt: null },
-      });
-      return NextResponse.json(updated);
-    }
-
-    const updated = await prisma.rawJob.update({
+    const updated = await prisma.jobPosting.update({
       where: { id },
       data: { isDeleted: false, deletedAt: null },
     });
